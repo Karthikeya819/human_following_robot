@@ -10,8 +10,10 @@ from datetime import datetime
 # PID Control Variables
 time = 0
 integral = 0
+integral1 = 0
 time_prev = -1e-6
 e_prev = 0
+e_prev1 = 0
 
 class MinimalPublisher(Node):
 
@@ -38,7 +40,7 @@ class MinimalPublisher(Node):
         ret, frame = self.cam.read()
         if not ret:
             return
-        results = self.model.predict(frame, conf=0.5)
+        results = self.model.track(frame, conf=0.5)
 
         # Filter out Person class detections
         person_boxes = [box for box in results[0].boxes if box.cls == 0.0]
@@ -53,32 +55,23 @@ class MinimalPublisher(Node):
         # Commands Bot
         origin_y,origin_x = frame.shape[:2]
         origin_x /= 2
+        origin_y /= 2
 
         x1, y1, x2, y2 = person_boxes[0].xyxy[0]
         Iorigin_x = (x2 + x1)/2
+        Iorigin_y = (y2 + y1)/2
 
-        self.msg.angular.z = float(PID(1,0,0,origin_x,Iorigin_x))/300
-
-        # shift_x = Iorigin_x - origin_x
-        # print(shift_x)
-        # if abs(shift_x) > 25:
-        #     if shift_x > 0:
-        #         print("Move Right")
-        #         self.msg.angular.z = -0.3
-        #     elif shift_x < 0:
-        #         print("Move Left")
-        #         self.msg.angular.z = 0.3
-        # else:
-        #     self.msg.linear.x = 0.0
-        #     self.msg.angular.z = 0.0
+        pid = PID(1, 0, 0, origin_x, Iorigin_x, 0, 0, 0, 0,0)
+        self.msg.angular.z, self.msg.linear.x = [float(value) / 300 for value in pid]
         
         # publish msg
         self.publisher_.publish(self.msg)
 
         for person in person_boxes:
+            person_id = "Null" if person.id == None else int(person.id)
             x1, y1, x2, y2 = person.xyxy[0]
             cv.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (255, 0, 0), 2)
-            cv.putText(frame, f'Class: person, Conf: {person.conf[0]:.2f}', (int(x1), int(y1) - 10), cv.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+            cv.putText(frame, f'Id: {person_id} Class: person, Conf: {person.conf[0]:.2f}', (int(x1), int(y1) - 10), cv.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
             cv.circle(frame,(int(frame.shape[1]/2),int(frame.shape[0]/2)),5,(255,0,0),-1)
             cv.circle(frame,(int((x1+x2)/2),int((y1+y2)/2)),5,(255,0,0),-1)
 
@@ -94,21 +87,31 @@ def main(args=None):
     minimal_publisher.destroy_node()
     rclpy.shutdown()
 
-def PID(Kp, Ki, Kd, setpoint, measurement):
-    global time, integral, time_prev, e_prev  # Value of offset - when the error is equal zero
+def PID(Kp, Ki, Kd, setpoint, measurement,Kp1, Ki1, Kd1, setpoint1, measurement1):
+    global time, integral, time_prev, e_prev, integral1, e_prev1
     dtime = datetime.now()
     time = dtime.second + 0.000001 * dtime.microsecond
+    # SetPoint1
     offset = 0
-    # PID calculations
     e = setpoint - measurement 
     P = Kp*e
     integral = integral + Ki*e*(time - time_prev)
-    D = Kd*(e - e_prev)/(time - time_prev)  # calculate manipulated variable - MV 
+    D = Kd*(e - e_prev)/(time - time_prev)
     MV = offset + P + integral + D 
     # update stored data for next iteration
     e_prev = e
+    # SetPoint2
+    offset1 = 0
+    e1 = setpoint1 - measurement1
+    P = Kp1*e1
+    integral1 = integral1 + Ki1*e1*(time - time_prev)
+    D = Kd1*(e1-e_prev1)/(time - time_prev)
+    MV1 = offset1 + P + integral1 + D
+    # Update data for next Iteration
+    e_prev1 = e1
     time_prev = time
-    return MV
+
+    return MV,MV1
 
 if __name__ == '__main__':
     main()
