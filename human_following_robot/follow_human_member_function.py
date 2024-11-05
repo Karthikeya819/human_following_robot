@@ -9,11 +9,18 @@ from datetime import datetime
 
 # PID Control Variables
 time = 0
+time1 = 0
 integral = 0
 integral1 = 0
 time_prev = -1e-6
+time_prev1 = -1e-6
 e_prev = 0
 e_prev1 = 0
+
+# Tracking Particular Human
+REGISTERED = False
+REGISTERED_ID = None
+REGISTERED_AREA = None
 
 class MinimalPublisher(Node):
 
@@ -23,8 +30,8 @@ class MinimalPublisher(Node):
         timer_period = 0.05  # seconds
         self.timer = self.create_timer(timer_period, self.timer_callback)
         self.cam = cv.VideoCapture('/dev/video2')
-        package_share_directory = get_package_share_directory('human_following_robot')  # Replace with your package name
-        model_path = os.path.join(package_share_directory, 'models', 'yolov8n.pt')  # Adjust the path as needed
+        package_share_directory = get_package_share_directory('human_following_robot')
+        model_path = os.path.join(package_share_directory, 'models', 'yolov8n.pt')
         self.model = YOLO(model_path)
         # Initialize Message
         self.msg = Twist()
@@ -37,6 +44,7 @@ class MinimalPublisher(Node):
         self.msg.angular.z = 0.0
 
     def timer_callback(self):
+        global REGISTERED, REGISTERED_ID, REGISTERED_AREA
         ret, frame = self.cam.read()
         if not ret:
             return
@@ -50,22 +58,51 @@ class MinimalPublisher(Node):
             self.msg.linear.x = 0.0
             self.msg.angular.z = 0.0
             self.publisher_.publish(self.msg)
+            #REGISTERED = False
             return
-
-        # Commands Bot
-        origin_y,origin_x = frame.shape[:2]
-        origin_x /= 2
-        origin_y /= 2
-
-        x1, y1, x2, y2 = person_boxes[0].xyxy[0]
-        Iorigin_x = (x2 + x1)/2
-        Iorigin_y = (y2 + y1)/2
-
-        pid = PID(1, 0, 0, origin_x, Iorigin_x, 0, 0, 0, 0,0)
-        self.msg.angular.z, self.msg.linear.x = [float(value) / 300 for value in pid]
         
-        # publish msg
-        self.publisher_.publish(self.msg)
+        if not REGISTERED:
+            for person in person_boxes:
+                if person.id != None:
+                    REGISTERED = True
+                    REGISTERED_ID = int(person.id)
+                    x1, y1, x2, y2 = person.xyxy[0]
+                    REGISTERED_AREA = int((x2-x1)*(y2-y1))
+                    break
+        
+        print(REGISTERED,REGISTERED_ID,REGISTERED_AREA)
+
+        if REGISTERED:
+            for person in person_boxes:
+                if person.id == REGISTERED_ID:
+                    # Commands Bot
+                    origin_y,origin_x = frame.shape[:2]
+                    origin_x /= 2
+                    origin_y /= 2
+            
+                    x1, y1, x2, y2 = person.xyxy[0]
+                    Iorigin_x = (x2 + x1)/2
+                    Iorigin_y = (y2 + y1)/2
+
+                    Area = int((x2-x1)*(y2-y1))
+            
+                    self.msg.angular.z = float(PID(1, 0, 0, origin_x, Iorigin_x)) / 300
+                    self.msg.linear.x = float(PIDL(1, 0, 0, REGISTERED_AREA, Area)) / 70000
+
+                    #print("REGIS: "+str(REGISTERED_AREA)+", Current: "+str(Area))
+
+                    # Shift_Area = REGISTERED_AREA - Area
+                    # if abs(Shift_Area) > 3000:
+                    #     if Shift_Area < 0:
+                    #         self.msg.linear.x = -0.2
+                    #     else:
+                    #         self.msg.linear.x = +0.2
+                    # else:
+                    #     self.msg.linear.x = 0.0
+                    
+                    # publish msg
+                    self.publisher_.publish(self.msg)
+                    break
 
         for person in person_boxes:
             person_id = "Null" if person.id == None else int(person.id)
@@ -87,8 +124,8 @@ def main(args=None):
     minimal_publisher.destroy_node()
     rclpy.shutdown()
 
-def PID(Kp, Ki, Kd, setpoint, measurement,Kp1, Ki1, Kd1, setpoint1, measurement1):
-    global time, integral, time_prev, e_prev, integral1, e_prev1
+def PID(Kp, Ki, Kd, setpoint, measurement):
+    global time, integral, time_prev, e_prev
     dtime = datetime.now()
     time = dtime.second + 0.000001 * dtime.microsecond
     # SetPoint1
@@ -100,18 +137,26 @@ def PID(Kp, Ki, Kd, setpoint, measurement,Kp1, Ki1, Kd1, setpoint1, measurement1
     MV = offset + P + integral + D 
     # update stored data for next iteration
     e_prev = e
-    # SetPoint2
-    offset1 = 0
-    e1 = setpoint1 - measurement1
-    P = Kp1*e1
-    integral1 = integral1 + Ki1*e1*(time - time_prev)
-    D = Kd1*(e1-e_prev1)/(time - time_prev)
-    MV1 = offset1 + P + integral1 + D
-    # Update data for next Iteration
-    e_prev1 = e1
     time_prev = time
+    return MV
 
-    return MV,MV1
+# PID Linear Motion
+def PIDL(Kp, Ki, Kd, setpoint, measurement):
+    global time1, integral1, time_prev1, e_prev1
+    dtime = datetime.now()
+    time1 = dtime.second + 0.000001 * dtime.microsecond
+    # SetPoint2
+    offset = 0
+    e = setpoint - measurement 
+    print(setpoint, setpoint - measurement)
+    P = Kp*e
+    integral1 = integral1 + Ki*e*(time1 - time_prev1)
+    D = Kd*(e - e_prev1)/(time1 - time_prev1)
+    MV = offset + P + integral + D 
+    # update stored data for next iteration
+    e_prev1 = e
+    time_prev1 = time1
+    return MV
 
 if __name__ == '__main__':
     main()
