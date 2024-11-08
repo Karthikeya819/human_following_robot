@@ -87,7 +87,11 @@ class MinimalPublisher(Node):
                     Area = int((x2-x1)*(y2-y1))
             
                     self.msg.angular.z = float(PID(1, 0, 0, origin_x, Iorigin_x)) / 300
-                    self.msg.linear.x = float(PIDL(1, 0, 0, REGISTERED_AREA, Area)) / 70000
+                    if self.msg.angular.z < 0.1:
+                        self.msg.linear.x = float(PIDL(1, 0, 0, REGISTERED_AREA, Area)) / 70000
+                    else:
+                        self.msg.linear.x = 0.0                    
+                    #self.msg.linear.x = float(PIDL(1, 0, 0, REGISTERED_AREA, Area)) / 70000
 
                     #print("REGIS: "+str(REGISTERED_AREA)+", Current: "+str(Area))
 
